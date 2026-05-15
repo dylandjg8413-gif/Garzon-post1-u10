@@ -1,0 +1,151 @@
+name: Android CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  # =========================================================
+  # JOB 1 - LINT + TESTS
+  # =========================================================
+  lint-and-test:
+    name: Lint y Pruebas Unitarias
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      # Java 17
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # Permisos gradlew
+      - name: Permisos para gradlew
+        run: chmod +x gradlew
+
+      # Lint
+      - name: Ejecutar Lint
+        run: ./gradlew lintDebug
+
+      # Unit Tests
+      - name: Ejecutar pruebas unitarias
+        run: ./gradlew testDebugUnitTest
+
+      # JaCoCo Quality Gate
+      - name: Verificar cobertura JaCoCo
+        run: ./gradlew jacocoCoverageVerification
+
+      # Upload test reports
+      - name: Subir reportes de tests
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: app/build/reports/tests/
+
+      # Upload coverage
+      - name: Subir reporte JaCoCo
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jacoco-report
+          path: app/build/reports/jacoco/
+
+  # =========================================================
+  # JOB 2 - BUILD + FIREBASE DISTRIBUTION
+  # =========================================================
+  build-and-distribute:
+    name: Build y Distribución
+    runs-on: ubuntu-latest
+
+    needs: lint-and-test
+
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      # Checkout
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      # Java 17
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # Permisos gradlew
+      - name: Permisos para gradlew
+        run: chmod +x gradlew
+
+      # =====================================================
+      # DECODE KEYSTORE
+      # =====================================================
+      - name: Decodificar Keystore
+        shell: bash
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" > keystore.base64
+          base64 --decode keystore.base64 > release-key.jks
+
+          if [ ! -f release-key.jks ]; then
+            echo "Keystore no generado"
+            exit 1
+          fi
+
+          echo "KEYSTORE_PATH=$(pwd)/release-key.jks" >> $GITHUB_ENV
+
+      # =====================================================
+      # BUILD RELEASE
+      # =====================================================
+      - name: Generar APK Release
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASS }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      # =====================================================
+      # VERIFY APK
+      # =====================================================
+      - name: Verificar APK generado
+        run: |
+          ls -la app/build/outputs/apk/release/
+
+      # =====================================================
+      # UPLOAD APK ARTIFACT
+      # =====================================================
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+
+      # =====================================================
+      # FIREBASE DISTRIBUTION
+      # =====================================================
+      - name: Distribuir a Firebase
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_APP_ID }}
+          token: ${{ secrets.FIREBASE_TOKEN }}
+          groups: testers
+          file: app/build/outputs/apk/release/app-release.apk
+          releaseNotes: |
+            Build automático CI/CD
+            Run: #${{ github.run_number }}
+            Commit: ${{ github.sha }}
