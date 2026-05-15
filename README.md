@@ -13,7 +13,7 @@ Coverage Gate — Validación de cobertura mínima ≥ 70% usando JaCoCo
 Signed Build — Generación automática del APK firmado
 Deployment — Publicación automática en Firebase App Distribution
 
-Flujo del Pipeline
+🔄 Flujo del Pipeline
 ┌─────────────┐     ┌──────────────────┐     ┌────────────────────┐
 │ Merge /Push │────▶│ quality-security │────▶│ deploy-release     │
 │ a develop   │     │                  │     │ (solo en release)  │
